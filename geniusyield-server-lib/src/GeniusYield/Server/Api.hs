@@ -6,7 +6,7 @@ module GeniusYield.Server.Api (
   MainAPI,
   mainAPI,
   mainServer,
-  geniusYieldAPISwagger,
+  geniusYieldAPIOpenApi,
 ) where
 
 import Control.Lens ((?~))
@@ -15,9 +15,9 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as K
 import Data.Kind (Type)
 import Data.List (sortBy)
+import Data.OpenApi
 import Data.Strict qualified as Strict
 import Data.Strict.Tuple
-import Data.Swagger
 import Data.Swagger qualified as Swagger
 import Data.Swagger.Internal.Schema qualified as Swagger
 import Data.Version (showVersion)
@@ -34,12 +34,15 @@ import GeniusYield.Server.Auth (APIKeyAuthProtect, V0)
 import GeniusYield.Server.Constants (gitHash)
 import GeniusYield.Server.Ctx
 import GeniusYield.Server.Dex.HistoricalPrices.Maestro
+import GeniusYield.Server.Dex.HistoricalPrices.TapTools (TapToolsPriceHistoryAPI, handleTapToolsPriceHistoryApi)
 import GeniusYield.Server.Dex.Markets (MarketsAPI, handleMarketsApi)
 import GeniusYield.Server.Dex.PartialOrder (OrderInfo (..), OrdersAPI, handleOrdersApi, poiToOrderInfo)
+import GeniusYield.Server.Orphans ()
 import GeniusYield.Server.Tx (TxAPI, handleTxApi)
 import GeniusYield.Server.Utils
 import GeniusYield.TxBuilder (GYTxQueryMonad (utxosAtAddress))
 import GeniusYield.Types
+import GeniusYield.Types.OpenApi ()
 import PackageInfo_geniusyield_server_lib qualified as PackageInfo
 import RIO hiding (asks, logDebug, logInfo)
 import RIO.Char (toLower)
@@ -47,7 +50,7 @@ import RIO.List (isPrefixOf)
 import RIO.Map qualified as Map
 import RIO.Text qualified as T
 import Servant
-import Servant.Swagger
+import Servant.OpenApi
 
 {- $setup
 
@@ -147,7 +150,7 @@ instance Aeson.ToJSON GYBalance where
   toJSON = Aeson.object . map (RIO.uncurry assetPairToKVT) . valueToList . unGYBalance
   toEncoding = Aeson.pairs . foldMap (RIO.uncurry assetPairToKVT) . valueToList . unGYBalance
 
-assetPairToKVT ∷ Aeson.KeyValue kv ⇒ GYAssetClass → Integer → kv
+assetPairToKVT ∷ Aeson.KeyValue e kv ⇒ GYAssetClass → Integer → kv
 assetPairToKVT ac i = K.fromText (f ac) Aeson..= toUrlPiece i
  where
   f GYLovelace = "lovelace"
@@ -155,21 +158,21 @@ assetPairToKVT ac i = K.fromText (f ac) Aeson..= toUrlPiece i
 
 instance Swagger.ToSchema GYBalance where
   declareNamedSchema _ = do
-    pure $
-      Swagger.named "GYBalance" $
-        mempty
-          & Swagger.type_
-            ?~ Swagger.SwaggerObject
-          & Swagger.example
-            ?~ toJSON
-              ( GYBalance $
-                  valueFromList
-                    [ (GYLovelace, 22),
-                      (GYToken "ff80aaaf03a273b8f5c558168dc0e2377eea810badbae6eceefc14ef" "GOLD", 101)
-                    ]
-              )
-          & Swagger.description
-            ?~ "A multi asset quantity, represented as map where each key represents an asset: policy ID and token name in hex concatenated by a dot."
+    pure
+      $ Swagger.named "GYBalance"
+      $ mempty
+      & Swagger.type_
+      ?~ Swagger.SwaggerObject
+        & Swagger.example
+      ?~ toJSON
+        ( GYBalance
+            $ valueFromList
+              [ (GYLovelace, 22),
+                (GYToken "ff80aaaf03a273b8f5c558168dc0e2377eea810badbae6eceefc14ef" "GOLD", 101)
+              ]
+        )
+        & Swagger.description
+      ?~ "A multi asset quantity, represented as map where each key represents an asset: policy ID and token name in hex concatenated by a dot."
 
 -------------------------------------------------------------------------------
 -- Server's API.
@@ -186,6 +189,10 @@ type OrderBookAPI = Summary "Order book" :> Description "Get order book for a sp
 
 type BalancesAPI = Summary "Balances" :> Description "Get token balances of an address." :> Capture "address" GYAddressBech32 :> Get '[JSON] GYBalance
 
+type HistoricalPricesAPI =
+  "maestro" :> MaestroPriceHistoryAPI
+    :<|> "tap-tools" :> TapToolsPriceHistoryAPI
+
 type V0API =
   "settings" :> SettingsAPI
     :<|> "orders" :> OrdersAPI
@@ -194,7 +201,7 @@ type V0API =
     :<|> "trading-fees" :> TradingFeesAPI
     :<|> "assets" :> AssetsAPI
     :<|> "order-books" :> OrderBookAPI
-    :<|> "historical-prices" :> "maestro" :> MaestroPriceHistoryAPI
+    :<|> "historical-prices" :> HistoricalPricesAPI
     :<|> "balances" :> BalancesAPI
 
 type GeniusYieldAPI = APIKeyAuthProtect :> V0 :> V0API
@@ -207,55 +214,60 @@ infixr 4 +>
 type family (+>) (api1 ∷ k) (api2 ∷ Type) where
   (+>) api1 api2 = APIKeyAuthProtect :> V0 :> api1 :> api2
 
-geniusYieldAPISwagger ∷ Swagger
-geniusYieldAPISwagger =
-  toSwagger geniusYieldAPI
+geniusYieldAPIOpenApi ∷ OpenApi
+geniusYieldAPIOpenApi =
+  toOpenApi geniusYieldAPI
     & info
-      . title
-      .~ "GeniusYield DEX Server API"
-    & info
+    . title
+    .~ "GeniusYield DEX Server API"
+      & info
       . version
-      .~ "0.0.1"
-    & info
+    .~ "0.0.1"
+      & info
       . license
-      ?~ ("Apache-2.0" & url ?~ URL "https://opensource.org/licenses/apache-2-0")
-    & info
+    ?~ ("Apache-2.0" & url ?~ URL "https://opensource.org/licenses/apache-2-0")
+      & info
       . contact
-      ?~ ( mempty
-            & url
-              ?~ URL "https://www.geniusyield.co/"
+    ?~ ( mempty
+          & url
+          ?~ URL "https://www.geniusyield.co/"
             & email
-              ?~ "support@geniusyield.co"
+          ?~ "support@geniusyield.co"
             & name
-              ?~ "GeniusYield Technical Support"
-         )
-    & info
+          ?~ "GeniusYield Technical Support"
+       )
+      & info
       . description
-      ?~ "API to interact with GeniusYield DEX."
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("tx" +> TxAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Transaction" & description ?~ "Endpoints related to transaction hex such as submitting a transaction"]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("markets" +> MarketsAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Markets" & description ?~ "Endpoints related to accessing markets information"]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("orders" +> OrdersAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Orders" & description ?~ "Endpoints related to interacting with orders"]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("settings" +> SettingsAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Settings" & description ?~ "Endpoint to get server settings such as network, version, and revision"]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("trading-fees" +> TradingFeesAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Trading Fees" & description ?~ "Endpoint to get trading fees of DEX."]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("assets" +> AssetsAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Assets" & description ?~ "Endpoint to fetch asset details."]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("order-books" +> OrderBookAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Order Book" & description ?~ "Endpoint to fetch order book."]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("historical-prices" +> "maestro" :> MaestroPriceHistoryAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Historical Prices" & description ?~ "Endpoints to fetch historical prices."]
-    & applyTagsFor (subOperations (Proxy ∷ Proxy ("balances" +> BalancesAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Balances" & description ?~ "Endpoint to fetch token balances."]
+    ?~ "API to interact with GeniusYield DEX."
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("tx" +> TxAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Transaction" & description ?~ "Endpoints related to transaction hex such as submitting a transaction"]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("markets" +> MarketsAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Markets" & description ?~ "Endpoints related to accessing markets information"]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("orders" +> OrdersAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Orders" & description ?~ "Endpoints related to interacting with orders"]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("settings" +> SettingsAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Settings" & description ?~ "Endpoint to get server settings such as network, version, and revision"]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("trading-fees" +> TradingFeesAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Trading Fees" & description ?~ "Endpoint to get trading fees of DEX."]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("assets" +> AssetsAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Assets" & description ?~ "Endpoint to fetch asset details."]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("order-books" +> OrderBookAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Order Book" & description ?~ "Endpoint to fetch order book."]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("historical-prices" +> HistoricalPricesAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Historical Prices" & description ?~ "Endpoints to fetch historical prices."]
+      & applyTagsFor (subOperations (Proxy ∷ Proxy ("balances" +> BalancesAPI)) (Proxy ∷ Proxy GeniusYieldAPI)) ["Balances" & description ?~ "Endpoint to fetch token balances."]
 
 geniusYieldServer ∷ Ctx → ServerT GeniusYieldAPI IO
 geniusYieldServer ctx =
-  ignoredAuthResult $
-    handleSettings ctx
-      :<|> handleOrdersApi ctx
-      :<|> handleMarketsApi ctx
-      :<|> handleTxApi ctx
-      :<|> handleTradingFeesApi ctx
-      :<|> handleAssetsApi ctx
-      :<|> handleOrderBookApi ctx
-      :<|> handleMaestroPriceHistoryApi ctx
-      :<|> handleBalancesApi ctx
+  ignoredAuthResult
+    $ handleSettings ctx
+    :<|> handleOrdersApi ctx
+    :<|> handleMarketsApi ctx
+    :<|> handleTxApi ctx
+    :<|> handleTradingFeesApi ctx
+    :<|> handleAssetsApi ctx
+    :<|> handleOrderBookApi ctx
+    :<|> handleHistoricalPricesApi ctx
+    :<|> handleBalancesApi ctx
  where
   ignoredAuthResult f _authResult = f
+
+handleHistoricalPricesApi ∷ Ctx → ServerT HistoricalPricesAPI IO
+handleHistoricalPricesApi ctx =
+  handleMaestroPriceHistoryApi ctx
+    :<|> handleTapToolsPriceHistoryApi ctx
 
 type MainAPI =
   GeniusYieldAPI
@@ -329,8 +341,8 @@ handleOrderBookApi ctx@Ctx {..} orderAssetPair mownAddress = do
           )
           ([] :!: [])
           os'
-  pure $
-    OrderBookInfo
+  pure
+    $ OrderBookInfo
       { obiMarketPairId = orderAssetPair,
         obiTimestamp = gytime,
         obiAsks = sortBy (\a b → compare (oiPrice a) (oiPrice b)) asks, -- sort by increasing price

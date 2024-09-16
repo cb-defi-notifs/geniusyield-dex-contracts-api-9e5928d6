@@ -46,7 +46,7 @@ data MnemonicWalletDetails = MnemonicWalletDetails
     addrIx ∷ !(Maybe Word32)
   }
   deriving stock (Generic)
-  deriving (FromJSON, ToJSON) via CustomJSON '[FieldLabelModifier '[CamelToSnake]] MnemonicWalletDetails
+  deriving anyclass (FromJSON, ToJSON)
 
 data ServerConfig = ServerConfig
   { scCoreProvider ∷ !GYCoreProviderInfo,
@@ -56,6 +56,7 @@ data ServerConfig = ServerConfig
     scPort ∷ !Port,
     scWallet ∷ !(Maybe UserWallet),
     scServerApiKey ∷ !(Confidential Text),
+    scTapToolsApiKey ∷ !(Maybe (Confidential Text)),
     scCollateral ∷ !(Maybe GYTxOutRef),
     scStakeAddress ∷ !(Maybe GYStakeAddressBech32)
   }
@@ -97,7 +98,8 @@ coreConfigFromServerConfig ServerConfig {..} =
   GYCoreConfig
     { cfgCoreProvider = scCoreProvider,
       cfgNetworkId = scNetworkId,
-      cfgLogging = scLogging
+      cfgLogging = scLogging,
+      cfgLogTiming = Nothing
     }
 
 optionalSigningKeyFromServerConfig ∷ ServerConfig → IO (Maybe (Pair GYSomePaymentSigningKey GYAddress))

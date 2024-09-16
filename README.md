@@ -7,9 +7,11 @@ This repository houses on-chain smart contracts, Haskell off-chain interaction l
 - [Structure of repository](#structure-of-repository)
 - [Bot API Server](#bot-api-server)
   - [Spinning up the api server using docker](#spinning-up-the-api-server-using-docker)
+    - [Setting up the API Server with Docker (Maestro)](#setting-up-the-API-Server-with-docker-maestro)
+    - [Setting up the API Server with Docker (Kupo)](#setting-up-the-API-Server-with-docker-kupo)
   - [Building locally from source using Docker](#building-locally-from-source-using-docker)
   - [Building locally from source using the Haskell Toolchain](#building-locally-from-source-using-the-haskell-toolchain)
-  - [Swagger API documentation](#swagger-api-documentation)
+  - [OpenApi documentation](#openapi-documentation)
   - [Trading Strategy Executor (Python SDK)](#trading-strategy-executor-python-sdk)
   - [Trading Bot API Video Tutorial](#trading-bot-api-video-tutorial)
 - [Contributing](#contributing)
@@ -25,6 +27,8 @@ This repository houses on-chain smart contracts, Haskell off-chain interaction l
 ## Bot API Server
 
 ### Spinning up the api server using docker
+
+#### Setting up the API Server with Docker (Maestro)
 
 The api server can be started using [docker-compose](https://github.com/geniusyield/dex-contracts-api/blob/main/docker-compose.yml). Simply clone the repository,
 prepare a `.env` file with the necessary secrets and use the make targets from
@@ -75,7 +79,37 @@ using the [Trading Strategy Executor Framework](https://github.com/geniusyield/s
 Thanks to the programming language agnostic RESTful API, any modern programming
 language could be used to implement trading strategies and/or SOR, MMBs.
 
-Intergration with the Genius Yield DEX has never been easier.
+Integration with the Genius Yield DEX has never been easier.
+
+> [!TIP]
+> Have a look at sample configuration in [Building locally from source using the Haskell Toolchain](#building-locally-from-source-using-the-haskell-toolchain) section for thorough explanation of options made available to configure the server.
+
+#### Setting up the API Server with Docker (Kupo)
+
+If you're looking to utilize the API server alongside the Kupo provider backend, you're in luck! We've streamlined the process for you.
+
+Inside the repository, you'll find a `docker-compose-kupo.yml` file, which serves as a blueprint for running a local Cardano node, Kupo, and the API server seamlessly.
+
+```bash
+# Step 1: Clone the repository
+git clone git@github.com:geniusyield/dex-contracts-api.git
+
+# Step 2: Initialize and update submodules
+cd dex-contracts-api
+git submodule update --init --recursive
+
+# Step 3: Configure your environment variables
+# Create a .env file and populate it with the necessary secrets
+echo """
+SERVER_API_KEY=___REPLACE_ME___
+SEED_PHRASE=[word_1, word_2, ... word_23, word_24]""" > .env
+nano .env  # Use your preferred text editor to replace placeholders with actual values
+
+# Step 4: Launch the API server with Kupo
+docker-compose -f docker-compose-kupo.yml up -d
+```
+
+By following these steps, you'll have the API server up and running smoothly, integrated with the powerful capabilities of the Kupo provider backend.
 
 ### Building locally from source using Docker
 
@@ -106,20 +140,16 @@ For details please see the following section:
 
     ```yaml
      # Blockchain provider used by Atlas, our off-chain transaction building tool.
-     # Supported values of `coreProvider` represented as JSON for brevity:
-     # Local node in combination of Kupo, `{ socketPath: string, kupoUrl: string }`
-     # Maestro, `{ maestroToken: string, turboSubmit: boolean }`
-     # Blockfrost, `{ blockfrostKey: string }`
-     # Note that Blockfrost is not recommended as some of the operations performed aren't optimal with it.
+     # Head over to https://atlas-app.io/getting-started/endpoints#providing-data-provider section to know how to configure `coreProvider` and what all options are available for it.
     coreProvider:
       maestroToken: YOUR_MAESTRO_TOKEN
       turboSubmit: false
      # Network id, only `mainnet` and `preprod` are supported for at the moment.
     networkId: mainnet
      # Logging configuration. It's an array to cater for potentially multiple scribes.
+     # See it's description mentioned at https://atlas-app.io/getting-started/endpoints#providing-data-provider for more information.
     logging:
       - type:
-           # TODO: Possible values of `tag` are to be documented.
           tag: stderr
          # Possible values of `severity` are `Debug`, `Info`, `Warning` and `Error`.
         severity: Debug
@@ -131,6 +161,8 @@ For details please see the following section:
     maestroToken: YOUR_MAESTRO_TOKEN
      # API key to protect server endpoints with. It's value must be provided under `api-key` header of request.
     serverApiKey: YOUR_SECRET_KEY
+     # TapTools API key, to access historical prices using TapTools.
+    tapToolsApiKey: YOUR_TAP_TOOLS_KEY
      # Optionally, wallet key details if one wants server to be able to sign transactions using this key.
     wallet:
       tag: mnemonicWallet
@@ -192,9 +224,9 @@ Alternatively you could also test using `make test`. This is sending a test GET 
 Further test requests are available in the Makefile of the strategy executor:
 - [Make targets sending test HTTP requests to the Bot API](https://github.com/geniusyield/strategy-executor/blob/6b5a1b1d9f117831e409989335bd48875eef4189/Makefile#L32-L57)
 
-### Swagger API documentation
+### OpenApi documentation
 
-Endpoints made available by server are specified [here](./web/swagger/api.yaml).
+Endpoints made available by server are specified [here](./web/openapi/api.yaml).
 
 ### Trading Strategy Executor (Python SDK)
 

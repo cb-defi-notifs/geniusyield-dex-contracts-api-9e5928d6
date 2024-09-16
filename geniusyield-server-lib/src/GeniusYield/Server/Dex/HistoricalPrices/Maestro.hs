@@ -8,13 +8,11 @@ module GeniusYield.Server.Dex.HistoricalPrices.Maestro (
 
 import Control.Lens ((?~))
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import Data.Kind (Type)
 import Data.Swagger qualified as Swagger
-import Data.Swagger.Internal qualified as Swagger
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Deriving.Aeson
 import Fmt
-import GHC.TypeLits (Symbol)
+import GHC.TypeLits (AppendSymbol, Symbol)
 import GeniusYield.OrderBot.Adapter.Maestro (MaestroProvider (..), handleMaestroError)
 import GeniusYield.OrderBot.Domain.Assets (AssetDetails (adAssetTicker), AssetTicker (..))
 import GeniusYield.OrderBot.Domain.Markets (OrderAssetPair (..))
@@ -23,7 +21,7 @@ import GeniusYield.Server.Ctx
 import GeniusYield.Server.Utils
 import GeniusYield.Types
 import Maestro.Client.V1 (pricesFromDex)
-import Maestro.Types.V1 (Dex, OHLCCandleInfo (..), Order, Resolution, TaggedText (TaggedText))
+import Maestro.Types.V1 (Dex (..), OHLCCandleInfo (..), Order (..), Resolution (..), TaggedText (TaggedText))
 import RIO hiding (logDebug, logInfo)
 import RIO.Text (unpack)
 import RIO.Time (Day)
@@ -93,11 +91,18 @@ newtype MaestroOrder = MaestroOrder {unMaestroOrder ∷ Order}
   deriving stock (Show)
   deriving newtype (ToHttpApiData, FromHttpApiData, Enum, Bounded, ToJSON)
 
-commonEnumParamSchemaRecipe ∷ ∀ a (t ∷ Swagger.SwaggerKind Type). (Bounded a, Enum a, ToJSON a) ⇒ Proxy a → Swagger.ParamSchema t
-commonEnumParamSchemaRecipe _ = mempty & Swagger.type_ ?~ Swagger.SwaggerString & Swagger.enum_ ?~ fmap toJSON [(minBound ∷ a) .. maxBound]
-
 instance Swagger.ToParamSchema MaestroOrder where
   toParamSchema = commonEnumParamSchemaRecipe
+
+instance Swagger.ToSchema MaestroOrder where
+  declareNamedSchema p =
+    pure
+      $ Swagger.NamedSchema (Just "MaestroOrder")
+      $ Swagger.paramSchemaToSchema p
+      & Swagger.example
+      ?~ toJSON (MaestroOrder Ascending)
+        & Swagger.description
+      ?~ "Order of the results"
 
 newtype MaestroResolution = MaestroResolution {unMaestroResolution ∷ Resolution}
   deriving stock (Show)
@@ -106,6 +111,16 @@ newtype MaestroResolution = MaestroResolution {unMaestroResolution ∷ Resolutio
 instance Swagger.ToParamSchema MaestroResolution where
   toParamSchema = commonEnumParamSchemaRecipe
 
+instance Swagger.ToSchema MaestroResolution where
+  declareNamedSchema p =
+    pure
+      $ Swagger.NamedSchema (Just "MaestroResolution")
+      $ Swagger.paramSchemaToSchema p
+      & Swagger.example
+      ?~ toJSON (MaestroResolution Res1m)
+        & Swagger.description
+      ?~ "Resolution of the data"
+
 newtype MaestroDex = MaestroDex {unMaestroDex ∷ Dex}
   deriving stock (Show)
   deriving newtype (ToHttpApiData, FromHttpApiData, FromJSON, ToJSON, Enum, Bounded)
@@ -113,9 +128,19 @@ newtype MaestroDex = MaestroDex {unMaestroDex ∷ Dex}
 instance Swagger.ToParamSchema MaestroDex where
   toParamSchema = commonEnumParamSchemaRecipe
 
+instance Swagger.ToSchema MaestroDex where
+  declareNamedSchema p =
+    pure
+      $ Swagger.NamedSchema (Just "MaestroDex")
+      $ Swagger.paramSchemaToSchema p
+      & Swagger.example
+      ?~ toJSON (MaestroDex GeniusYield)
+        & Swagger.description
+      ?~ "DEX to fetch data from"
+
 type MaestroPriceHistoryAPI =
   Summary "Get price history using Maestro."
-    :> Description "This endpoint internally calls Maestro's \"DEX And Pair OHLC\" endpoint."
+    :> Description ("This endpoint internally calls Maestro's \"DEX And Pair OHLC\" endpoint. " `AppendSymbol` CommonMaestroKeyRequirementText)
     :> Capture "market-id" OrderAssetPair
     :> Capture "dex" MaestroDex
     :> QueryParam "resolution" MaestroResolution
